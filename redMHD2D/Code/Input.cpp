@@ -126,8 +126,9 @@ Input::Input(std::string setupFilename, std::string setup_Xoptions)
       file.close();
       
       if(setup_Xoptions != "")  {
-           std::vector<std::string> options_list = split(setup_Xoptions, ";");
-           while(options_list.empty() == false) { 
+
+          std::vector<std::string> options_list = split(setup_Xoptions, "+");
+          while(options_list.empty() == false) { 
              parseOption(options_list.back(), false);
              options_list.pop_back();
            }
@@ -163,19 +164,9 @@ FunctionParser Input::getFParser() {
     FunctionParser parser;
 
     parser.AddConstant("pi", M_PI);
-//    parser.AddConstant("Lx", Lx); parser.AddConstant("Nx", (double) Nx);
-//    parser.AddConstant("shat", geometry->shear);
-
-    // we can define in values as Setup.Parser = { eps = 0.01; sigma = 0.1 }, we need to parse it
-    // split in eps = 0.01
-/* 
-    std::vector<std::string> const_vec = split(parser_constants, ",");
-    for(int s = 0; s < const_vec.size(); s++) { 
-            std::vector<std::string> key_value = split(const_vec[s],"=");
-	        //std::cout << " Key : " <<   trimLower(key_value[0], false) << " value : " <<  string_to_double(key_value[1]) << std::endl;
-            parser.AddConstant(trimLower(key_value[0], false), string_to_double(key_value[1]));
-    };
- * */
+    parser.AddConstant("a", get("a", 1.));
+    parser.AddConstant("b", get("b", 1.));
+    parser.AddConstant("c", get("c", 1.));
     
     return parser;
 

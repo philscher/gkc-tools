@@ -37,10 +37,14 @@ double OutputTimeField, OutputTimePower;
   // Data Output stuff
   hid_t fileOutput;
   FileAttr *FA_Psi_Time, *FA_Psi, *FA_Phi, *FA_PowerKy_Phi, *FA_PowerKy_Psi, *FA_PowerKy_Time;
-  
+   
+  FileAttr *FA_Energy_Phi,  ///< Potential energy defined as \phi^2
+           *FA_Energy_Psi,  ///< Flux      energy defined as \psi^2
+           *FA_Energy_Time; ///< Time
   public:
 
-   DataOutput(Input *input, int Nx, int Nky, double Lx, double Ly, double *X, double *Psi0, double Viscosity, double Resistivity);
+   DataOutput(Input *input, int Nx, int Nky, double Lx, double Ly, double *X, double *Psi0, 
+              double Viscosity, double Resistivity);
    ~DataOutput();
    
    void output(int Step, double Time, double dt, int Nky, int Nx, cmplxd Phi[Nky][Nx], cmplxd Psi[Nky][Nx]);

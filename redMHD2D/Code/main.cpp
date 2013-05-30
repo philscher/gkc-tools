@@ -22,44 +22,37 @@
 #include <iostream>
 #include <sys/resource.h>
 
-
 #include "MHD.h"
-
-
 
 MHD *sim;
 
 void set_stacksize(int size_Mbytes)
 {
-    const rlim_t kStackSize = size_Mbytes * 1024 * 1024;   // min stack size = 16 MB
-    struct rlimit rl;
+  const rlim_t kStackSize = size_Mbytes * 1024 * 1024;   // min stack size = 16 MB
+  struct rlimit rl;
 
-    int result = getrlimit(RLIMIT_STACK, &rl);
+  int result = getrlimit(RLIMIT_STACK, &rl);
     
-    if(rl.rlim_cur == RLIM_INFINITY) std::cout << " Stack size is : Unlimited" << std::endl;
-    else                             std::cout << " Stack size is : " <<
+  if(rl.rlim_cur == RLIM_INFINITY) std::cout << " Stack size is : Unlimited" << std::endl;
+  else                             std::cout << " Stack size is : " <<
                                              rl.rlim_cur/(1024*1024)  << " MBytes" << std::endl;
-    //std::cout << " Stack size is : " << (rl.rlim_cur == RLIM_INFINITY ? "Unlimited" :
+//std::cout << " Stack size is : " << (rl.rlim_cur == RLIM_INFINITY ? "Unlimited" :
     
-    if ((result == 0) && (rl.rlim_cur != RLIM_INFINITY))
+  if ((result == 0) && (rl.rlim_cur != RLIM_INFINITY))
+  {
+    if (rl.rlim_cur < kStackSize)
     {
-        if (rl.rlim_cur < kStackSize)
-        {
-            rl.rlim_cur = kStackSize;
-            result = setrlimit(RLIMIT_STACK, &rl);
-            if (result != 0)
-            {
-                fprintf(stderr, "setrlimit returned result = %d\n", result);
-            }
-        }
-    
-       result = getrlimit(RLIMIT_STACK, &rl);
-       std::cout << " Stack size set to : " << rl.rlim_cur/(1024*1024) << " MBytes" << std::endl;
+      rl.rlim_cur = kStackSize;
+      result = setrlimit(RLIMIT_STACK, &rl);
+
+      if (result != 0) fprintf(stderr, "setrlimit returned result = %d\n", result);
     }
     
-
-
-    return;
+    result = getrlimit(RLIMIT_STACK, &rl);
+    std::cout << " Stack size set to : " << rl.rlim_cur/(1024*1024) << " MBytes" << std::endl;
+  }
+    
+  return;
 };
 
 

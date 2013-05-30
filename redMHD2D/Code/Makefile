@@ -4,7 +4,11 @@ SO =  main.o MHD.o DataOutput.o Input.o FunctionParser/fparser.o FunctionParser/
 #CXX = g++ 
 CXX = icc
 #CXXFLAGS = -fp-model fast=2 -fast -openmp -I$(HDF5_DIR)/include
-CXXFLAGS = -fast -openmp -I$(HDF5_DIR)/include
+
+# Use -hear-arrays to avoid stack-overflow for large arrays !
+CXXFLAGS = -fno-alias -fast -openmp -heap-arrays -fp-model fast=2 -I$(HDF5_DIR)/include
+
+#CXXFLAGS = -O3 -ggdb -openmp  -I$(HDF5_DIR)/include -fstack-protector-all -heap-arrays
 LDFLAGS = -L$(HDF5_DIR)/lib -lhdf5 -lhdf5_hl -liomp5 -lm
 
 EXE     = rmhd2 

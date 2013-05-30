@@ -30,28 +30,29 @@
 #include "DataOutput.h"
 #include "Input.h"
 
-
-
-
-//typedef std::complex<double> cmplxd;
 typedef _Complex double cmplxd;
-typedef cmplxd(*A1z)[];
+//typedef cmplxd(*A1z)[];
+
 
 class MHD {
 
-  public:
-    static const int Nx  = 2048;   ///< Define number of x points
-    static const int Nky = 10  ;   ///< Define number of poloidal modes
+ public:
+  
+  static const int Nx  = 1024;   ///< Define number of x points
+  static const int Nky = 32  ;   ///< Define number of poloidal modes
      
-  private:  
-    double _kw_2_dx,               ///<  \f$ \frac{1}{2 dx} \f$
-           _kw_dx2;                ///<  \f$ \frac{1}{dx^2} \f$
+ private:  
+   
+  double _kw_2_dx,               ///<  \f$ \frac{1}{2 dx} \f$
+         _kw_dx  , 
+         _kw_dx2;                ///<  \f$ \frac{1}{dx^2} \f$
 
-    bool doNonLinear;
-    DataOutput *data;
-    Input      *input;
+  bool doNonLinear;
+  DataOutput *data;
+  Input      *input;
 
-    __declspec(align(64)) cmplxd  
+  // Needs to be allocated on the heap
+  __declspec(align(64)) cmplxd  
               Vor[Nky][Nx], ///< Vorticity
               Cur[Nky][Nx], ///< Current
               Phi[Nky][Nx], ///< Kinetic
@@ -79,34 +80,34 @@ class MHD {
    
 
 
-    double Viscosity,         ///< \f$ \nu  \f$
-           Resistivity;       ///< \f$ \eta \f$
+  double Viscosity,         ///< \f$ \nu  \f$
+         Resistivity;       ///< \f$ \eta \f$
   
-  public:   
+ public:   
 
-    MHD(std::string setup_filename, std::string setup_Xoptions);
+  MHD(std::string setup_filename, std::string setup_Xoptions);
     
-    void startMainLoop();
+  void startMainLoop();
 
-    ~MHD();
+ ~MHD();
   
-  private:
+ private:
   
-	 void calculateRHSLinear(const int y_k);
-	 void calculateRHSNonLinear();
+  void calculateRHSLinear(const int y_k);
+  void calculateRHSNonLinear();
 
-    void initVariables(double Lx, double Ly);
-    void calculateDerivatives(const int y_k);
-    void calculateVor(const int y_k, const double dt) ;
-    void swap_Old_New(const int y_k) ;
-    void setBoundary(const int y_k);
+  void initVariables(double Lx, double Ly);
+  void calculateDerivatives(const int y_k);
+  void calculateVor(const int y_k, const double dt) ;
+  void swap_Old_New(const int y_k) ;
+  void setBoundary(const int y_k);
    
-    /**
-	 *  using Tomas algorithm (source Wikipedia http://en.wikipedia.org/wiki/Tridiagonal_matrix_algorithm)
-    *  having fixed boundary conditions
-    **/
-    void solveTriDiagonalMatrix(cmplxd Sb[Nx], cmplxd D[Nx], cmplxd Sp[Nx], 
-                                cmplxd  b[Nx], cmplxd X[Nky][Nx], const int ky);
+  /**
+  *  using Thomas algorithm (source Wikipedia http://en.wikipedia.org/wiki/Tridiagonal_matrix_algorithm)
+  *  having fixed boundary conditions
+  **/
+  void solveTriDiagonalMatrix(cmplxd Sb[Nx], cmplxd D[Nx], cmplxd Sp[Nx], 
+                              cmplxd  b[Nx], cmplxd X[Nky][Nx], const int ky);
 
 };
 

@@ -2,11 +2,13 @@
 
 
 #include <cstdarg>
+#include<ctime>
+#include<cstdlib>
 
-
-extern "C" double conj (const cmplxd z);
+extern "C" cmplxd conj (const cmplxd z);
 extern "C" double creal(const cmplxd z);
 extern "C" double cimag(const cmplxd z);
+extern "C" double cabs (const cmplxd z);
 
 template<class T> inline T max (T a, T b) { return a > b ? a : b; };
 template<class T> inline T pow2(T a)      { return a*a;          };
@@ -14,96 +16,94 @@ template<class T> inline T pow2(T a)      { return a*a;          };
 
 MHD::MHD(std::string setup_filename, std::string setup_Xoptions)  
 {
-    int num_threads = 0;
-    #pragma omp parallel shared(num_threads)
-    {
-      num_threads =  omp_get_num_threads();
-    }
+  int num_threads = 0;
+  #pragma omp parallel shared(num_threads)
+  {
+    num_threads =  omp_get_num_threads();
+  }
 
-	 std::cout << "Running with - " << num_threads << " - OpenMP Threads" << std::endl;
-    if(Nky % omp_get_num_threads() != 0) std::cout << "WARNING : Number of Threads not multiple of number of Ky modes";
+  std::cout << "Running with - " << num_threads << " - OpenMP Threads" << std::endl;
+  if(Nky % omp_get_num_threads() != 0) std::cout << "WARNING : Number of Threads not multiple of ky modes";
     
     
-    input = new Input(setup_filename, setup_Xoptions);
-
+  input = new Input(setup_filename, setup_Xoptions);
     
-    // some standard parameters
-    double Lx   = input->get("Lx" , 5.0 ); 
-    double Ly   = input->get("Ly" , 2. * M_PI );     
+  // some standard parameters
+  double Lx   = input->get("Lx" , 5.0 ); 
+  double Ly   = input->get("Ly" , 2. * M_PI );     
       
-    Viscosity   = input->get("Viscosity"  , 1.e-55);   
-    Resistivity = input->get("Resistivity", 1.e-4 );   
-    doNonLinear = input->get("doNonLinear", 0 );   
+  Viscosity   = input->get("Viscosity"  , 1.e-55);   
+  Resistivity = input->get("Resistivity", 1.e-4 );   
+  doNonLinear = input->get("doNonLinear", 0 );   
       
-    if(Nx <= 16) check(-1, DMESG("Nx < 16, choose Nx >= 16"));
+  if(Nx <= 16) check(-1, DMESG("Nx < 16, choose Nx >= 16"));
     
-    initVariables(Lx, Ly);
+  initVariables(Lx, Ly);
 
-    
-    data = new DataOutput(input, Nx, Nky, Lx, Ly, X, Psi0, Viscosity, Resistivity);
-  
+  data = new DataOutput(input, Nx, Nky, Lx, Ly, X, Psi0, Viscosity, Resistivity);
 }
 
 void MHD::startMainLoop() 
 {
-
+     double cfl_factor = 1.;
      double Time = 0., TimeMax=0.; 
      int    Step = 0 , StepMax=0 ;
     
-     TimeMax = input->get("TimeMax", 5000);
-     StepMax = input->get("StepMax", -1  );
+  TimeMax = input->get("TimeMax", 5000);
+  StepMax = input->get("StepMax", -1  );
      
-     double dt    = input->get("dt", max(TimeMax/StepMax, 0.01));
+     double dt_fixed = input->get("dt", max(TimeMax/StepMax, 0.01));
 
-     
-     #pragma omp parallel, shared(Step, Time)
-     {
+  #pragma omp parallel, shared(Step, Time)
+  {
 
        for(; ((Step <= StepMax) || (StepMax == -1)) && (Time <= TimeMax);) 
        {
+         const double dt = dt_fixed * cfl_factor;
            
             ///////////// First-half step ////////////////
-           #pragma omp for 
+           #pragma omp for schedule(static) 
            for(int y_k = 0; y_k < Nky; y_k++) { 
             
             swap_Old_New(y_k);
 	         calculateRHSLinear(y_k);
-           };
+      }
       
-           if(doNonLinear == true) calculateRHSNonLinear();
+      if(doNonLinear == true) calculateRHSNonLinear();
          
-           #pragma omp for
+           #pragma omp for schedule(static)
            for(int y_k = 0; y_k < Nky; y_k++) { 
 	      
-           calculateVor(y_k, 0.5*dt);
-	        setBoundary(y_k);
-	        calculateDerivatives(y_k);
+        calculateVor(y_k, 0.5*dt);
+	     setBoundary(y_k);
+	     calculateDerivatives(y_k);
           
-            ////////////// Second Half-Step ///////////////
-	        calculateRHSLinear(y_k);
+        ////////////// Second Half-Step ///////////////
+	     calculateRHSLinear(y_k);
          
-         };
+      };
 
-         if(doNonLinear == true) calculateRHSNonLinear();
+      if(doNonLinear == true) calculateRHSNonLinear();
 
-         #pragma omp for
+         #pragma omp for schedule(static)
          for(int y_k = 0; y_k < Nky; y_k++) { 
 
-	      calculateVor(y_k, dt);
-	      setBoundary(y_k);
-	      calculateDerivatives(y_k);
-   
-         }
+	     calculateVor(y_k, dt);
+	     setBoundary(y_k);
+	     calculateDerivatives(y_k);
+      }
          
-         // Data Output and Analysize is only handles by single thread
-         #pragma omp single
-         {
-            Time += dt; Step++;
+      // Data Output and Analyize is only handles by single thread
+      #pragma omp single
+      {
+        Time += dt; Step++;
 
-            data->output(Step, Time, dt, Nky, Nx, Phi, Psi);
+        data->output(Step, Time, dt, Nky, Nx, Phi, Psi);
                 
+           // cfl_factor = 1./(1. + __sec_reduce_max(cabs(dPhi[:][:])) * _kw_dx
+           //                     + (2.*M_PI/Ly * (Nky-1)) * __sec_reduce_max(cabs(Phi[:][:]))/dy);
             if(Step % 100 == 0) 
-               std::cout << "\r" << " Step : " << Step << "/" << StepMax << " Time : " << Time  << "/" << TimeMax;// << std::flush;
+               std::cout << "\r" << " Step : " << Step << "/" << StepMax << " Time : " << Time  << "/" << TimeMax << " dt : " << dt;// << std::flush;
           }
         }
 
@@ -115,33 +115,34 @@ void MHD::startMainLoop()
 void MHD::setBoundary(const int y_k) 
 {
 
-      // Set Zero-Boundary 
-      Phi[y_k][0:4] = 0.;   Phi[y_k][Nx-4:4] = 0.;
-      Vor[y_k][0:4] = 0.;   Vor[y_k][Nx-4:4] = 0.;
-      Cur[y_k][0:4] = 0.;   Cur[y_k][Nx-4:4] = 0.;
-      Psi[y_k][0:4] = 0.;   Psi[y_k][Nx-4:4] = 0.;
+   // Set Zero-Boundary 
+   Phi[y_k][0:4] = 0.;   Phi[y_k][Nx-4:4] = 0.;
+   Vor[y_k][0:4] = 0.;   Vor[y_k][Nx-4:4] = 0.;
+   Cur[y_k][0:4] = 0.;   Cur[y_k][Nx-4:4] = 0.;
+   Psi[y_k][0:4] = 0.;   Psi[y_k][Nx-4:4] = 0.;
       
-     dPhi[y_k][0:4] = 0.;  dPhi[y_k][Nx-4:4] = 0.;
-     dVor[y_k][0:4] = 0.;  dVor[y_k][Nx-4:4] = 0.;
-     dCur[y_k][0:4] = 0.;  dCur[y_k][Nx-4:4] = 0.;
-     dPsi[y_k][0:4] = 0.;  dPsi[y_k][Nx-4:4] = 0.;
+  dPhi[y_k][0:4] = 0.;  dPhi[y_k][Nx-4:4] = 0.;
+  dVor[y_k][0:4] = 0.;  dVor[y_k][Nx-4:4] = 0.;
+  dCur[y_k][0:4] = 0.;  dCur[y_k][Nx-4:4] = 0.;
+  dPsi[y_k][0:4] = 0.;  dPsi[y_k][Nx-4:4] = 0.;
 	   
-    ddPhi[y_k][0:4] = 0.; ddPhi[y_k][Nx-4:4] = 0.;
-      
+ ddPhi[y_k][0:4] = 0.; ddPhi[y_k][Nx-4:4] = 0.;
 
 }
 
 MHD::~MHD() 
 {
-    delete data;
+  delete data;
 };
 
 void MHD::initVariables(double Lx, double Ly) 
 {
 	  
-  const double dx = 2. * Lx / ((double) (Nx-1)); 
+  const double dx = Lx / ((double) (Nx-1   )); 
+  const double dy = Ly / ((double) (2*Nky-2)); 
     
   _kw_2_dx = 1./(2.*dx); _kw_dx2 = 1./(dx*dx);
+  _kw_dx   = 1./dx;
       
   // Parse equilibrium (psi0)
   FunctionParser Psi0_parser = input->getFParser();
@@ -154,7 +155,7 @@ void MHD::initVariables(double Lx, double Ly)
   // Set X-Axis & Equilibrium      
   for(int x=0; x < Nx; x++) {
 
-    X[x] = -Lx + x * dx;
+    X[x] = -Lx/2. + x * dx;
 
     double x_0  = X[x]       ; double psi0_0  = Psi0_parser.Eval(&x_0 );
     double x_p1 = X[x]+dx    ; double psi0_p1 = Psi0_parser.Eval(&x_p1);
@@ -171,17 +172,27 @@ void MHD::initVariables(double Lx, double Ly)
 			
     
     // Set inital perturbation
-    
-    Psi[:][x]= Pert_parser.Eval(&x_0);
-    Phi[:][x]= Pert_parser.Eval(&x_0);
-    Vor[:][x]= 0.;
-    
+    //Psi[:][x]= Pert_parser.Eval(&x_0);
+    //Phi[:][x]= Pert_parser.Eval(&x_0);
+    //Vor[:][x]= 0.;
   }
-      
+  
+  srand((unsigned)time(0)); 
+  const double eps = input->get("eps", 1.e-10);
+  
+  std::cout << "Alpha : " << input->get("a", 0.5) << std::endl;
+  
   for(int y_k = 0; y_k < Nky; y_k++) { 
+    
+  for(int x=0; x < Nx; x++) {
+    Psi[y_k][x]= eps * (((double) rand())/RAND_MAX-0.5);
+    Phi[y_k][x]= eps * (((double) rand())/RAND_MAX-0.5);
+    Vor[y_k][x]= eps * (((double) rand())/RAND_MAX-0.5);
+  }  
+      
   
     // Set ky-Axis
-    ky[y_k]   = 2.*M_PI*((cmplxd) 0.+ 1.I) * ((double) (y_k))/Ly;
+    ky[y_k]   = 2.*M_PI/Ly *((cmplxd) 0.+ 1.I) * y_k;
     setBoundary(y_k);
     calculateDerivatives(y_k);
   }
@@ -191,25 +202,24 @@ void MHD::initVariables(double Lx, double Ly)
 void MHD::calculateDerivatives(const int y_k) 
 {
    
-	     // central differences (first derivative, 2nd order)
-        // central difference (2nd  derivatrive, 2nd order)
-        dPhi [y_k][1:Nx-2] = (Phi[y_k][2:Nx-2] -     Phi[y_k][0:Nx-2]) * _kw_2_dx;
-	     ddPhi[y_k][1:Nx-2] = (Phi[y_k][2:Nx-2] - 2.* Phi[y_k][1:Nx-2] + Phi[y_k][0:Nx-2]) * _kw_dx2;
+  // central differences (first derivative, 2nd order)
+  // central difference  (2nd  derivative , 2nd order)
+  dPhi [y_k][1:Nx-2] = (Phi[y_k][2:Nx-2] -     Phi[y_k][0:Nx-2]) * _kw_2_dx;
+  ddPhi[y_k][1:Nx-2] = (Phi[y_k][2:Nx-2] - 2.* Phi[y_k][1:Nx-2] + Phi[y_k][0:Nx-2]) * _kw_dx2;
 	     
-	     dPsi [y_k][1:Nx-2] = (Psi[y_k][2:Nx-2] -     Psi[y_k][0:Nx-2]) * _kw_2_dx;
-	     ddPsi[y_k][1:Nx-2] = (Psi[y_k][2:Nx-2] - 2.* Psi[y_k][1:Nx-2] + Psi[y_k][0:Nx-2]) * _kw_dx2;
+  dPsi [y_k][1:Nx-2] = (Psi[y_k][2:Nx-2] -     Psi[y_k][0:Nx-2]) * _kw_2_dx;
+  ddPsi[y_k][1:Nx-2] = (Psi[y_k][2:Nx-2] - 2.* Psi[y_k][1:Nx-2] + Psi[y_k][0:Nx-2]) * _kw_dx2;
         
-        dVor [y_k][1:Nx-2] = (Vor[y_k][2:Nx-2] - Vor[y_k][0:Nx-2]) * _kw_2_dx;
-	     dCur [y_k][1:Nx-2] = (Cur[y_k][2:Nx-2] - Cur[y_k][0:Nx-2]) * _kw_2_dx;
-		 
+  dVor [y_k][1:Nx-2] = (Vor[y_k][2:Nx-2] - Vor[y_k][0:Nx-2]) * _kw_2_dx;
+  dCur [y_k][1:Nx-2] = (Cur[y_k][2:Nx-2] - Cur[y_k][0:Nx-2]) * _kw_2_dx;
 }
 
 
 void MHD::calculateRHSLinear(const int y_k) 
 {
-     // what is caluclated here ?!
-     VorRHS[y_k][:] = ky[y_k] * (dPsi0[:]*Cur[y_k][:] - dCur0[:]*Psi[y_k][:]);  
-     PsiRHS[y_k][:] = ky[y_k] * (dPsi0[:]*Phi[y_k][:]);
+  // what is calculated here ?!
+  VorRHS[y_k][:] = ky[y_k] * (dPsi0[:]*Cur[y_k][:] - dCur0[:]*Psi[y_k][:]);  
+  PsiRHS[y_k][:] = ky[y_k] * (dPsi0[:]*Phi[y_k][:]);
 };     
 
 void MHD::calculateRHSNonLinear()
@@ -219,8 +229,8 @@ void MHD::calculateRHSNonLinear()
      // it for parallel efficiency and confirmation. 
      #pragma omp for 
      for(int y_k = 0; y_k < Nky; y_k++) { 
-     
-     for(int y_k_ = (-Nky+1); y_k_ < Nky; y_k_++) {
+    
+     for(int y_k_ = -Nky+1; y_k_ < Nky; y_k_++) {
         
        // Triad condition (Mode matching condition)
        const int y_k__ = y_k - y_k_;       
@@ -231,33 +241,32 @@ void MHD::calculateRHSNonLinear()
        // if y_k_ < 0 use complex conjugate value for negative modes
        if     ((y_k_ >= 0) && (y_k__ >= 0)) 
        {
-       
-         VorRHS[y_k][:]  +=  - ky[y_k_]*Vor[y_k_][:]*dPhi[y_k__][:] + ky[y_k__]*Phi[y_k__][:]*dVor[y_k_][:] 
-                             + ky[y_k_]*Cur[y_k_][:]*dPsi[y_k__][:] - ky[y_k__]*Psi[y_k__][:]*dCur[y_k_][:];
-         PsiRHS[y_k][:]  +=    ky[y_k_]*Phi[y_k_][:]*dPsi[y_k__][:] - ky[y_k__]*Psi[y_k__][:]*dPhi[y_k_][:];
+           VorRHS[y_k][:]  +=  - ky[y_k_]*Vor[y_k_][:] *     dPhi[ y_k__][:] + ky[y_k__]*Phi[y_k__][:]*dVor[y_k_][:] 
+                               + ky[y_k_]*Cur[y_k_][:] *     dPsi[ y_k__][:] - ky[y_k__]*Psi[y_k__][:]*dCur[y_k_][:];
+           PsiRHS[y_k][:]  +=    ky[y_k_]*Phi[y_k_][:] *     dPsi[ y_k__][:] - ky[y_k__]*Psi[y_k__][:]*dPhi[y_k_][:];
        } 
-       
        else if((y_k_ >= 0) && (y_k__ <  0)) 
        {
-         		     VorRHS[y_k][:]  +=  - ky[y_k_]*Vor[y_k_][:]*conj(dPhi[-y_k__][:]) - ky[-y_k__]*conj(Phi[-y_k__][:])*dVor[y_k_][:] 
-                                        + ky[y_k_]*Cur[y_k_][:]*conj(dPsi[-y_k__][:]) + ky[-y_k__]*conj(Psi[-y_k__][:])*dCur[y_k_][:];
-                    PsiRHS[y_k][:]  +=    ky[y_k_]*Phi[y_k_][:]*conj(dPsi[-y_k__][:]) + ky[-y_k__]*conj(Psi[-y_k__][:])*dPhi[y_k_][:];
+          VorRHS[y_k][:]  +=  - ky[y_k_]*Vor[y_k_][:] * conj(dPhi[-y_k__][:])        - ky[-y_k__]*conj(Phi[-y_k__][:])*dVor[y_k_][:] 
+                              + ky[y_k_]*Cur[y_k_][:] * conj(dPsi[-y_k__][:])        + ky[-y_k__]*conj(Psi[-y_k__][:])*dCur[y_k_][:];
+          PsiRHS[y_k][:]  +=    ky[y_k_]*Phi[y_k_][:] * conj(dPsi[-y_k__][:])        + ky[-y_k__]*conj(Psi[-y_k__][:])*dPhi[y_k_][:];
        }
        
        else if((y_k_ < 0) && (y_k__ >= 0)) 
        {
-         		     VorRHS[y_k][:]  +=  + ky[-y_k_]*conj(Vor[-y_k_][:])*dPhi[y_k__][:] + ky[y_k__]*Phi[y_k__][:]*conj(dVor[-y_k_][:]) 
-                                        - ky[-y_k_]*conj(Cur[-y_k_][:])*dPsi[y_k__][:] - ky[y_k__]*Psi[y_k__][:]*conj(dCur[-y_k_][:]);
-                    PsiRHS[y_k][:]  +=  - ky[-y_k_]*conj(Phi[-y_k_][:])*dPsi[y_k__][:] - ky[y_k__]*Psi[y_k__][:]*conj(dPhi[-y_k_][:]);
+          VorRHS[y_k][:]  +=  + ky[-y_k_]*conj(Vor[-y_k_][:])*dPhi[y_k__][:]       + ky[y_k__]*Phi[y_k__][:]*conj(dVor[-y_k_][:]) 
+                              - ky[-y_k_]*conj(Cur[-y_k_][:])*dPsi[y_k__][:]       - ky[y_k__]*Psi[y_k__][:]*conj(dCur[-y_k_][:]);
+          PsiRHS[y_k][:]  +=  - ky[-y_k_]*conj(Phi[-y_k_][:])*dPsi[y_k__][:]       - ky[y_k__]*Psi[y_k__][:]*conj(dPhi[-y_k_][:]);
        } 
        else // ((y_k_ <  0) && (y_k__ < 0)) 
        {
-         		     VorRHS[y_k][:]  +=  + ky[-y_k_]*conj(Vor[-y_k_][:])*conj(dPhi[-y_k__][:]) - ky[-y_k__]*conj(Phi[-y_k__][:])*conj(dVor[-y_k_][:]) 
-                                        - ky[-y_k_]*conj(Cur[-y_k_][:])*conj(dPsi[-y_k__][:]) + ky[-y_k__]*conj(Psi[-y_k__][:])*conj(dCur[-y_k_][:]);
-                    PsiRHS[y_k][:]  +=  - ky[-y_k_]*conj(Phi[-y_k_][:])*conj(dPsi[-y_k__][:]) + ky[-y_k__]*conj(Psi[-y_k__][:])*conj(dPhi[-y_k_][:]);
+         
+          VorRHS[y_k][:]  +=  + ky[-y_k_]*conj(Vor[-y_k_][:])*conj(dPhi[-y_k__][:]) - ky[-y_k__]*conj(Phi[-y_k__][:])*conj(dVor[-y_k_][:]) 
+                              - ky[-y_k_]*conj(Cur[-y_k_][:])*conj(dPsi[-y_k__][:]) + ky[-y_k__]*conj(Psi[-y_k__][:])*conj(dCur[-y_k_][:]);
+          PsiRHS[y_k][:]  +=  - ky[-y_k_]*conj(Phi[-y_k_][:])*conj(dPsi[-y_k__][:]) + ky[-y_k__]*conj(Psi[-y_k__][:])*conj(dPhi[-y_k_][:]);
        }
 
-    } } 
+    } }
 }
 
 
@@ -335,8 +344,8 @@ void MHD::calculateVor(const int y_k, const double dt)
 
 void MHD::swap_Old_New(const int y_k) 
 {
-	   VorOLD[y_k][:] = Vor[y_k][:];
-	   PsiOLD[y_k][:] = Psi[y_k][:];
+  VorOLD[y_k][:] = Vor[y_k][:];
+  PsiOLD[y_k][:] = Psi[y_k][:];
 }
 
 void MHD::solveTriDiagonalMatrix(cmplxd Sub[Nx], cmplxd Diag[Nx], cmplxd Sup[Nx], cmplxd b[Nx], cmplxd X[Nky][Nx], const int y_k)
@@ -355,21 +364,3 @@ void MHD::solveTriDiagonalMatrix(cmplxd Sub[Nx], cmplxd Diag[Nx], cmplxd Sup[Nx]
   for (int x = Nx-6; x >= 4; x--) X[y_k][x]=(b[x]-Sup[x]*X[y_k][x+1])/Diag[x];
 }
 
-/* 
-void MHD::solveTriDiagonalMatrix(cmplxd Sub[Nx], cmplxd Diag[Nx], cmplxd Sup[Nx], cmplxd b[Nx], cmplxd X[Nky][Nx], const int y_k)
-{
-        // Note that 0, 1, [ 2, 3, 4,  ...,  Nx-4 , Nx-3, ] Nx-2, Nx-1 is boundary domain
-        for (int x = 3; x < Nx-2; x++)
-        {
-                const cmplxd m = Sub[x]/Diag[x-1];
-                Diag[x]       += - m*Sup[x-1];
-                   b[x]       += - m*  b[x-1];
-        }
-
-        // back substitution
-        X[y_k][Nx-3] = b[Nx-3]/Diag[Nx-3];
-        for (int x = Nx-4; x >= 2; x--) X[y_k][x]=(b[x]-Sup[x]*X[y_k][x+1])/Diag[x];
-}
-
-
- * */
